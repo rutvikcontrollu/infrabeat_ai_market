@@ -340,7 +340,10 @@ function StarsChart({ projects }) {
 }
 
 /* ─────────────────────────────────────────────
-   4. MARKET HEALTH GAUGE  — speedometer arc
+   4. MARKET HEALTH GAUGE  — clean half-circle
+      uses strokeDasharray on a semicircle path
+      so each zone is a separate non-overlapping
+      segment, and the fill animates via offset.
 ───────────────────────────────────────────── */
 function HealthGauge({ demand, competition, opportunity }) {
   const [progress, setProgress] = useState(0);
@@ -349,7 +352,7 @@ function HealthGauge({ demand, competition, opportunity }) {
     let start = null;
     const animate = (ts) => {
       if (!start) start = ts;
-      const p = Math.min((ts - start) / 1000, 1);
+      const p = Math.min((ts - start) / 1200, 1);
       setProgress(1 - Math.pow(1 - p, 3));
       if (p < 1) raf = requestAnimationFrame(animate);
     };
@@ -357,126 +360,152 @@ function HealthGauge({ demand, competition, opportunity }) {
     return () => cancelAnimationFrame(raf);
   }, [demand, competition, opportunity]);
 
-  // health score: high demand + low competition + high opportunity
   const health = Math.round(
     0.4 * opportunity + 0.35 * demand + 0.25 * Math.max(0, 100 - competition)
   );
 
-  const CX = 130, CY = 125, R = 90;
-  const totalDeg = 180;
-  const currentDeg = (health / 100) * totalDeg * progress;
+  // Geometry: semicircle, cx=150 cy=150 r=100
+  // We use a <path> for a true half-circle (not a full circle clipped)
+  // Arc goes from left (-180°) to right (0°) along the top
+  const CX = 150, CY = 150, R = 100;
+  // circumference of a full circle; half = half-arc length
+  const fullCirc = 2 * Math.PI * R;   // ~628.3
+  const halfCirc = Math.PI * R;        // ~314.2
 
-  const polarToXY = (deg, r) => {
-    const rad = ((180 - deg) * Math.PI) / 180; // flip so 0=left, 180=right
-    return [CX + r * Math.cos(rad), CY - r * Math.sin(rad)];
+  // strokeDasharray trick on a full circle rotated so only top half shows:
+  // dash = halfCirc, gap = halfCirc → draws exactly the top half
+  // Then we layer coloured segments on top using offsets within that half
+
+  // Zone boundaries (fraction of halfCirc)
+  const dangerEnd  = halfCirc * 0.33;
+  const warnEnd    = halfCirc * 0.66;
+  const successEnd = halfCirc;
+
+  // Animated fill length
+  const fillLen = halfCirc * (health / 100) * progress;
+
+  // Zone color for the fill
+  const zoneColor = health < 34 ? C.danger : health < 67 ? C.warn : C.success;
+
+  // Needle angle: -180deg (left) → 0deg (right) mapped to health 0→100
+  const needleAngleDeg = -180 + (health / 100) * 180 * progress;
+  const needleRad = (needleAngleDeg * Math.PI) / 180;
+  const needleLen = R - 12;
+  const nx = CX + needleLen * Math.cos(needleRad);
+  const ny = CY + needleLen * Math.sin(needleRad);
+
+  // Tick marks at 0, 25, 50, 75, 100
+  const ticks = [0, 25, 50, 75, 100].map((v) => {
+    const a = ((-180 + (v / 100) * 180) * Math.PI) / 180;
+    const inner = R + 6;
+    const outer = R + 16;
+    return {
+      x1: CX + inner * Math.cos(a),
+      y1: CY + inner * Math.sin(a),
+      x2: CX + outer * Math.cos(a),
+      y2: CY + outer * Math.sin(a),
+      lx: CX + (outer + 8) * Math.cos(a),
+      ly: CY + (outer + 8) * Math.sin(a),
+      label: v,
+    };
+  });
+
+  // The shared circle props for the dash trick
+  // transform rotates so dash starts from the left (-180°)
+  const circleProps = {
+    cx: CX, cy: CY, r: R,
+    fill: "none",
+    strokeWidth: 20,
+    strokeLinecap: "butt",
+    transform: `rotate(-180, ${CX}, ${CY})`,
   };
-
-  // SVG arc helper
-  const arc = (deg, r) => {
-    const [sx, sy] = polarToXY(0, r);
-    const [ex, ey] = polarToXY(deg, r);
-    const largeArc = deg > 90 ? 1 : 0;
-    return `M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 0 ${ex} ${ey}`;
-  };
-
-  // zones: 0-33 danger, 34-66 warn, 67-100 success
-  const zoneColor =
-    health < 34 ? C.danger : health < 67 ? C.warn : C.success;
-
-  // needle
-  const needleDeg = currentDeg;
-  const [nx, ny] = polarToXY(needleDeg, R - 18);
-
-  const labels = [
-    { deg: 0,   text: "0" },
-    { deg: 45,  text: "25" },
-    { deg: 90,  text: "50" },
-    { deg: 135, text: "75" },
-    { deg: 180, text: "100" },
-  ];
 
   return (
     <div className="mc-chart-wrap">
       <div className="mc-chart-label">Market Health Score</div>
-      <svg viewBox="0 0 260 160" className="mc-gauge-svg">
-        {/* background track */}
-        <path
-          d={arc(180, R)}
-          fill="none"
+      <svg viewBox="0 0 300 175" className="mc-gauge-svg">
+        <defs>
+          <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%"   stopColor={C.danger}  stopOpacity="0.9" />
+            <stop offset="33%"  stopColor={C.warn}    stopOpacity="0.9" />
+            <stop offset="100%" stopColor={C.success} stopOpacity="0.9" />
+          </linearGradient>
+        </defs>
+
+        {/* ── Track: grey half-circle ── */}
+        <circle
+          {...circleProps}
           stroke={C.panel3}
-          strokeWidth={18}
-          strokeLinecap="round"
+          strokeDasharray={`${halfCirc} ${fullCirc}`}
         />
-        {/* danger zone 0-33% */}
-        <path
-          d={arc(Math.min(180 * 0.33, 180), R)}
-          fill="none"
-          stroke={`${C.danger}40`}
-          strokeWidth={18}
-          strokeLinecap="round"
+
+        {/* ── Zone bands (danger / warn / success) ── */}
+        {/* danger: 0 → 33% */}
+        <circle
+          {...circleProps}
+          stroke={`${C.danger}35`}
+          strokeDasharray={`${dangerEnd} ${fullCirc}`}
         />
-        {/* warn zone 33-66% */}
-        <path
-          d={arc(Math.min(180 * 0.66, 180), R)}
-          fill="none"
+        {/* warn: 33% → 66% — offset by dangerEnd to start where danger ends */}
+        <circle
+          {...circleProps}
           stroke={`${C.warn}30`}
-          strokeWidth={18}
-          strokeLinecap="round"
+          strokeDasharray={`${warnEnd - dangerEnd} ${fullCirc}`}
+          strokeDashoffset={-dangerEnd}
         />
-        {/* success zone 66-100% */}
-        <path
-          d={arc(180, R)}
-          fill="none"
-          stroke={`${C.success}20`}
-          strokeWidth={18}
-          strokeLinecap="round"
+        {/* success: 66% → 100% */}
+        <circle
+          {...circleProps}
+          stroke={`${C.success}25`}
+          strokeDasharray={`${successEnd - warnEnd} ${fullCirc}`}
+          strokeDashoffset={-warnEnd}
         />
-        {/* active fill */}
-        <path
-          d={arc(Math.max(currentDeg, 1), R)}
-          fill="none"
+
+        {/* ── Animated fill arc ── */}
+        <circle
+          {...circleProps}
           stroke={zoneColor}
-          strokeWidth={18}
-          strokeLinecap="round"
-          opacity={0.9}
+          strokeWidth={20}
+          strokeDasharray={`${Math.max(fillLen, 0)} ${fullCirc}`}
+          opacity={0.95}
         />
-        {/* needle */}
-        <line
-          x1={CX} y1={CY}
-          x2={nx} y2={ny}
-          stroke={C.text}
-          strokeWidth={2.5}
-          strokeLinecap="round"
-        />
-        <circle cx={CX} cy={CY} r={6} fill={C.text} />
-        <circle cx={CX} cy={CY} r={3} fill={C.panel} />
 
-        {/* tick labels */}
-        {labels.map((l, i) => {
-          const [lx, ly] = polarToXY(l.deg, R + 16);
-          return (
-            <text key={i} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle"
-              fill={C.faint} fontSize={8} fontFamily="Inter, sans-serif">
-              {l.text}
+        {/* ── Tick marks ── */}
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2}
+              stroke={C.faint} strokeWidth={1.5} />
+            <text x={t.lx} y={t.ly} textAnchor="middle" dominantBaseline="middle"
+              fill={C.faint} fontSize={7.5} fontFamily="Inter, sans-serif">
+              {t.label}
             </text>
-          );
-        })}
+          </g>
+        ))}
 
-        {/* center value */}
-        <text x={CX} y={CY - 22} textAnchor="middle"
-          fill={zoneColor} fontSize={28} fontWeight={700}
+        {/* ── Needle ── */}
+        <line x1={CX} y1={CY} x2={nx} y2={ny}
+          stroke={C.text} strokeWidth={2.5} strokeLinecap="round" />
+        <circle cx={CX} cy={CY} r={7} fill={C.text} />
+        <circle cx={CX} cy={CY} r={3.5} fill={C.panel2} />
+
+        {/* ── Score text ── */}
+        <text x={CX} y={CY - 28} textAnchor="middle"
+          fill={zoneColor} fontSize={32} fontWeight={700}
           fontFamily="Space Grotesk, Inter, sans-serif">
           {Math.round(health * progress)}
         </text>
-        <text x={CX} y={CY - 6} textAnchor="middle"
-          fill={C.faint} fontSize={8} fontFamily="Inter, sans-serif">
-          /100
+        <text x={CX} y={CY - 10} textAnchor="middle"
+          fill={C.faint} fontSize={9} fontFamily="Inter, sans-serif">
+          / 100
         </text>
 
-        {/* zone labels */}
-        <text x={30} y={145} fill={C.danger} fontSize={8} fontFamily="Inter, sans-serif" textAnchor="middle">Low</text>
-        <text x={130} y={148} fill={C.warn} fontSize={8} fontFamily="Inter, sans-serif" textAnchor="middle">Medium</text>
-        <text x={230} y={145} fill={C.success} fontSize={8} fontFamily="Inter, sans-serif" textAnchor="middle">High</text>
+        {/* ── Zone labels ── */}
+        <text x={38} y={158} fill={C.danger} fontSize={8.5}
+          fontFamily="Inter, sans-serif" fontWeight={600} textAnchor="middle">Low</text>
+        <text x={CX} y={165} fill={C.warn} fontSize={8.5}
+          fontFamily="Inter, sans-serif" fontWeight={600} textAnchor="middle">Medium</text>
+        <text x={262} y={158} fill={C.success} fontSize={8.5}
+          fontFamily="Inter, sans-serif" fontWeight={600} textAnchor="middle">High</text>
       </svg>
 
       {/* sub-metrics row */}
@@ -532,4 +561,3 @@ export default function MarketCharts({ result }) {
     </div>
   );
 }
-
