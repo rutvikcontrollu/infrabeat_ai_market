@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from services.github_service import get_github_projects
+from services.web_search_service import get_web_results   # replaces github_service
 from services.news_service import get_news_count
 from services.product_service import get_products
 from services.trend_service import get_trend
@@ -25,7 +25,7 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ============================================================
 # Simple in-memory cache  (keyword -> (timestamp, result))
-# Avoids hammering GitHub / SerpAPI / Groq for repeat searches.
+# Avoids hammering SerpAPI / Groq for repeat searches.
 # ============================================================
 CACHE_TTL = 60 * 60          # 1 hour
 _cache = {}
@@ -78,7 +78,7 @@ def home():
     return jsonify({
         "project": "InfraBeat",
         "status": "running",
-        "version": "3.1 AI"
+        "version": "3.2 AI"
     })
 
 
@@ -114,12 +114,12 @@ def analyze():
     warnings = []
 
     try:
-        github_data = get_github_projects(keyword)
-        project_count = github_data.get("count", 0)
-        top_projects = github_data.get("projects", [])[:5]
+        web_data = get_web_results(keyword)
+        web_count = web_data.get("count", 0)
+        top_results = web_data.get("projects", [])[:10]
     except Exception:
-        project_count, top_projects = 0, []
-        warnings.append("GitHub data unavailable")
+        web_count, top_results = 0, []
+        warnings.append("Web search data unavailable")
 
     try:
         news_count = get_news_count(keyword)
@@ -144,16 +144,15 @@ def analyze():
     # --------------------------
     # Scoring
     # --------------------------
-    scores = compute_scores(project_count, news_count, top_projects, trend=trend)
-    demand_score = scores["demand_score"]
+    scores = compute_scores(web_count, news_count, top_results, trend=trend)
+    demand_score      = scores["demand_score"]
     competition_score = scores["competition_score"]
     opportunity_score = scores["opportunity_score"]
-    verdict = scores["verdict"]
+    verdict           = scores["verdict"]
 
     # --------------------------
     # GROQ AI REPORT
     # --------------------------
-    # describe the search-interest trend for the AI, if we have it
     trend_info = scores.get("trend", {})
     if trend_info.get("available"):
         trend_line = (
@@ -171,7 +170,7 @@ Analyze the following business category.
 Keyword: {keyword}
 
 Market Data:
-- GitHub Projects: {project_count}
+- Google Web Results: {web_count:,}
 - News Articles: {news_count}
 - Demand Score: {demand_score}/100
 - Competition Score: {competition_score}/100
@@ -224,20 +223,20 @@ Make the report professional and investor-friendly.
         warnings.append("AI report unavailable")
 
     result = {
-        "keyword": keyword,
-        "github_projects": project_count,
-        "news_articles": news_count,
-        "demand_score": demand_score,
+        "keyword":           keyword,
+        "web_results":       web_count,         # replaces github_projects
+        "news_articles":     news_count,
+        "demand_score":      demand_score,
         "competition_score": competition_score,
         "opportunity_score": opportunity_score,
-        "verdict": verdict,
-        "ai_report": ai_report,
-        "top_projects": top_projects,
-        "products": products,
-        "trend": scores.get("trend", {}),
-        "breakdown": scores["breakdown"],
-        "warnings": warnings,
-        "cached": False,
+        "verdict":           verdict,
+        "ai_report":         ai_report,
+        "top_results":       top_results,        # replaces top_projects
+        "products":          products,
+        "trend":             scores.get("trend", {}),
+        "breakdown":         scores["breakdown"],
+        "warnings":          warnings,
+        "cached":            False,
     }
 
     cache_set(cache_key, result)

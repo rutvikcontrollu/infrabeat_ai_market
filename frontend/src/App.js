@@ -299,8 +299,8 @@ function App() {
 
               <div className="stats-grid">
                 <StatCard
-                  label="GitHub Projects"
-                  value={result.github_projects}
+                  label="Web Results"
+                  value={result.web_results?.toLocaleString()}
                   barPct={80}
                   tone="cyan"
                   delay={0}
@@ -438,18 +438,25 @@ function App() {
                 </button>
               </div>
 
-              <div className="section-head reveal-up">🔥 Top GitHub Projects</div>
-              {result.top_projects?.map((project, index) => (
+              <div className="section-head reveal-up">🔥 Top Web Results</div>
+              {result.top_results?.map((project, index) => (
                 <div
                   key={index}
                   className="project-card reveal-left"
                   style={{ animationDelay: `${index * 70}ms` }}
                 >
-                  <div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <strong>{project.name}</strong>
-                    <div className="stars">
-                      ⭐ {project.stars.toLocaleString()}
-                    </div>
+                    {project.source && (
+                      <div className="stars" style={{ opacity: 0.6, fontSize: "0.78rem" }}>
+                        🌐 {project.source}
+                      </div>
+                    )}
+                    {project.snippet && (
+                      <div style={{ fontSize: "0.82rem", marginTop: 4, opacity: 0.8, lineHeight: 1.4 }}>
+                        {project.snippet.slice(0, 120)}{project.snippet.length > 120 ? "…" : ""}
+                      </div>
+                    )}
                   </div>
                   <a href={project.url} target="_blank" rel="noreferrer">
                     Open

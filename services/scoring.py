@@ -3,14 +3,23 @@ Market scoring logic.
 
 Design notes
 ------------
-Market signals are exponentially distributed: a popular keyword can have 100x
-the repos/stars of a quiet one. Linear bucketing (e.g. count // 100) loses all
-resolution at the high end and flattens everything small to zero. So we
-log-scale the raw inputs onto a 0-100 range with sensible saturation points.
+Market signals are exponentially distributed: a popular keyword can have
+orders of magnitude more web results than a quiet one. Linear bucketing
+loses resolution at the high end, so we log-scale raw inputs onto 0-100
+with sensible saturation points.
 
-- demand_score      : how much total interest/activity exists (repos + news + stars)
-- competition_score : how saturated / dominated the space is (concentration of stars)
-- opportunity_score : demand discounted by competition, not a raw subtraction
+- demand_score      : how much total interest/activity exists
+                      (web result count + news + number of result titles)
+- competition_score : how saturated the space is
+                      (breadth of web presence + richness of top results)
+- opportunity_score : demand discounted by competition
+
+Changes from the old GitHub-based version
+------------------------------------------
+- `project_count` / `total_stars` / `top_star` → gone.
+- New input `web_count`  : total Google results for the keyword.
+- New input `top_results`: list of dicts with at least {"name", "snippet"}.
+  Used to gauge how rich / commercialised the top results look.
 """
 
 import math
@@ -27,37 +36,46 @@ def _log_scale(value, full_at):
     return max(0, min(round(score), 100))
 
 
-def compute_scores(project_count, news_count, top_projects, trend=None):
+def _richness(top_results):
+    """
+    0-100 score for how informative / commercial the top pages look.
+    Heuristic: count results that have a non-empty snippet (Google only
+    suppresses snippets for very thin / blocked pages).
+    """
+    if not top_results:
+        return 0
+    with_snippet = sum(1 for r in top_results if r.get("snippet", "").strip())
+    return round(100 * with_snippet / len(top_results))
+
+
+def compute_scores(web_count, news_count, top_results, trend=None):
     """
     Returns a dict with demand_score, competition_score, opportunity_score,
     verdict, and the component breakdown (useful for transparency in the UI).
 
-    `trend` is an optional dict from trend_service.get_trend(). When available,
-    it modulates demand: a declining search trend pulls demand down, a rising
-    one lifts it. This is what stops declining categories (e.g. physical media)
-    from reading as high-demand just because they still have code/news volume.
+    Parameters
+    ----------
+    web_count    : int   — estimated Google total results for the keyword
+    news_count   : int   — news article count (unchanged from before)
+    top_results  : list  — top organic results from web_search_service
+    trend        : dict  — optional trend dict from trend_service.get_trend()
+
+    Return dict shape is identical to the old version so app.py stays lean.
     """
 
-    stars = [p.get("stars", 0) for p in top_projects]
-    total_stars = sum(stars)
-    top_star = max(stars) if stars else 0
+    # ---- Demand: interest signals (web volume, news, result richness) ----
+    # Google returns billions of results for broad terms; saturate at 1 billion.
+    web_demand  = _log_scale(web_count, full_at=1_000_000_000)
+    news_demand = _log_scale(news_count, full_at=100)           # RSS tops ~100
+    rich_score  = _richness(top_results)                        # 0-100 already
 
-    # ---- Demand: interest signals (repos, news, aggregate stars) ----
-    repo_demand = _log_scale(project_count, full_at=20000)   # 20k repos ~ saturated interest
-    news_demand = _log_scale(news_count, full_at=100)        # Google RSS tops out ~100
-    star_demand = _log_scale(total_stars, full_at=200000)    # 200k stars across top 5 = huge
-
-    # weighted blend: repos and stars matter more than raw news volume
+    # weighted blend
     demand_raw = round(
-        0.45 * repo_demand + 0.20 * news_demand + 0.35 * star_demand
+        0.45 * web_demand + 0.25 * news_demand + 0.30 * rich_score
     )
     demand_raw = max(0, min(demand_raw, 100))
 
-    # ---- Trend modulation ----
-    # A search-interest trend reweights demand. trend_score 50 = neutral (x1.0);
-    # a collapsed trend (0) scales demand to ~0.55x, a doubled trend (100) to
-    # ~1.25x. This is the fix for "still has code/news volume but nobody buys it":
-    # declining real-world interest now visibly drags the demand score down.
+    # ---- Trend modulation (unchanged) ----
     trend_available = bool(trend and trend.get("available"))
     trend_score = trend.get("trend_score", 50) if trend else 50
     if trend_available:
@@ -67,25 +85,19 @@ def compute_scores(project_count, news_count, top_projects, trend=None):
     else:
         demand_score = demand_raw
 
-    # ---- Competition: saturation / dominance ----
-    # A space is "competitive" when there are many projects AND a few giants
-    # dominate the stars. We blend breadth (repo count) with concentration
-    # (how big the single biggest player is).
-    breadth = _log_scale(project_count, full_at=30000)
-    dominance = _log_scale(top_star, full_at=120000)         # one 120k-star repo = entrenched leader
+    # ---- Competition: how crowded / established the space is ----
+    # Breadth = how many results exist; dominance = how polished the top pages are.
+    breadth   = _log_scale(web_count, full_at=2_000_000_000)   # higher ceiling
+    dominance = rich_score                                       # rich results → big players
 
-    competition_score = round(0.5 * breadth + 0.5 * dominance)
+    competition_score = round(0.55 * breadth + 0.45 * dominance)
     competition_score = max(0, min(competition_score, 100))
 
     # ---- Opportunity: demand you can actually capture ----
-    # High demand is only valuable if you can break in. We discount demand by
-    # competition, but gently — a busy, open market should still score well.
-    # The discount floors at 0.4 so strong demand is never fully erased, and
-    # we add a small bonus for the sweet spot: real demand + low competition.
     capture = 1 - (competition_score / 100) * 0.6   # max 60% discount
     opportunity_score = demand_score * max(capture, 0.4)
 
-    # sweet-spot bonus: meaningful demand with room to enter
+    # sweet-spot bonus: real demand + room to enter
     if demand_score >= 35 and competition_score <= 60:
         opportunity_score += 12
 
@@ -93,8 +105,6 @@ def compute_scores(project_count, news_count, top_projects, trend=None):
     opportunity_score = max(0, min(opportunity_score, 100))
 
     # ---- Verdict ----
-    # Low opportunity has distinct causes worth naming differently:
-    # a declining market, a crowded one, or one with little interest.
     direction = trend.get("direction") if trend_available else None
 
     if trend_available and direction == "declining" and opportunity_score < 45:
@@ -109,24 +119,23 @@ def compute_scores(project_count, news_count, top_projects, trend=None):
         verdict = "LOW DEMAND"
 
     return {
-        "demand_score": demand_score,
+        "demand_score":      demand_score,
         "competition_score": competition_score,
         "opportunity_score": opportunity_score,
-        "verdict": verdict,
+        "verdict":           verdict,
         "trend": {
-            "available": trend_available,
-            "direction": direction or "unknown",
+            "available":   trend_available,
+            "direction":   direction or "unknown",
             "trend_score": trend_score if trend_available else None,
-            "change_pct": trend.get("change_pct") if trend_available else None,
+            "change_pct":  trend.get("change_pct") if trend_available else None,
         },
         "breakdown": {
-            "repo_demand": repo_demand,
-            "news_demand": news_demand,
-            "star_demand": star_demand,
+            "web_demand":          web_demand,
+            "news_demand":         news_demand,
+            "richness":            rich_score,
             "demand_before_trend": demand_raw,
-            "breadth": breadth,
-            "dominance": dominance,
-            "total_stars": total_stars,
-            "top_star": top_star,
+            "breadth":             breadth,
+            "dominance":           dominance,
+            "web_count":           web_count,
         },
     }

@@ -238,9 +238,9 @@ function DemandBreakdown({ breakdown }) {
 }
 
 /* ─────────────────────────────────────────────
-   3. GITHUB STARS  — animated vertical bar chart
+   3. WEB RESULTS  — animated horizontal bar chart
 ───────────────────────────────────────────── */
-function StarsChart({ projects }) {
+function WebResultsChart({ results }) {
   const [progress, setProgress] = useState(0);
   useEffect(() => {
     let raf;
@@ -253,87 +253,51 @@ function StarsChart({ projects }) {
     };
     raf = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(raf);
-  }, [projects]);
+  }, [results]);
 
-  if (!projects?.length) return null;
+  if (!results?.length) return null;
 
-  const top = projects.slice(0, 5);
-  const maxStars = Math.max(...top.map((p) => p.stars), 1);
-  const CHART_H = 120;
-  const barW = 32;
-  const gap = 14;
-  const totalW = top.length * (barW + gap) - gap + 60;
+  const top = results.slice(0, 5);
+  const CHART_W = 220;
+  const barH = 18;
+  const gap = 10;
+  const totalH = top.length * (barH + gap) + 40;
   const gradColors = [C.accent, C.teal, C.cyan, C.success, C.warn];
 
   return (
     <div className="mc-chart-wrap">
-      <div className="mc-chart-label">GitHub Stars — Top Projects</div>
-      <svg viewBox={`0 0 ${totalW} ${CHART_H + 52}`} className="mc-stars-svg">
+      <div className="mc-chart-label">🌐 Top Web Results</div>
+      <svg viewBox={`0 0 ${CHART_W + 20} ${totalH}`} className="mc-stars-svg">
         <defs>
           {top.map((_, i) => (
-            <linearGradient key={i} id={`sg${i}`} x1="0" y1="0" x2="0" y2="1">
+            <linearGradient key={i} id={`sg${i}`} x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor={gradColors[i]} stopOpacity="0.95" />
-              <stop offset="100%" stopColor={gradColors[i]} stopOpacity="0.35" />
+              <stop offset="100%" stopColor={gradColors[i]} stopOpacity="0.25" />
             </linearGradient>
           ))}
         </defs>
-        {top.map((p, i) => {
-          const x = 30 + i * (barW + gap);
-          const ratio = p.stars / maxStars;
-          const fullH = ratio * CHART_H;
-          const h = fullH * progress;
-          const y = CHART_H - h + 10;
-
-          // truncate name
-          const name = p.name.length > 10 ? p.name.slice(0, 9) + "…" : p.name;
-
+        {top.map((r, i) => {
+          const y = 20 + i * (barH + gap);
+          const ratio = (top.length - i) / top.length;   // rank-based width
+          const w = ratio * CHART_W * progress;
+          const name = r.name?.length > 22 ? r.name.slice(0, 21) + "…" : (r.name || "");
           return (
             <g key={i}>
-              {/* bar */}
-              <rect
-                x={x} y={y}
-                width={barW} height={Math.max(h, 2)}
-                rx={6}
-                fill={`url(#sg${i})`}
-              />
-              {/* star count above bar */}
-              {progress > 0.6 && (
-                <text
-                  x={x + barW / 2} y={y - 4}
-                  textAnchor="middle"
-                  fill={gradColors[i]}
-                  fontSize={8}
-                  fontWeight={700}
-                  fontFamily="Inter, sans-serif"
-                >
-                  {p.stars >= 1000
-                    ? `${(p.stars / 1000).toFixed(1)}k`
-                    : p.stars}
+              <rect x={0} y={y} width={Math.max(w, 2)} height={barH} rx={4}
+                fill={`url(#sg${i})`} />
+              {progress > 0.5 && (
+                <text x={Math.max(w + 4, 6)} y={y + barH / 2 + 4}
+                  fill={gradColors[i]} fontSize={8} fontWeight={600}
+                  fontFamily="Inter, sans-serif">
+                  {name}
                 </text>
               )}
-              {/* repo name label */}
-              <text
-                x={x + barW / 2}
-                y={CHART_H + 22}
-                textAnchor="middle"
-                fill={C.dim}
-                fontSize={8.5}
-                fontFamily="Inter, sans-serif"
-              >
-                {name}
-              </text>
             </g>
           );
         })}
-        {/* baseline */}
-        <line
-          x1={24} y1={CHART_H + 10}
-          x2={totalW - 4} y2={CHART_H + 10}
-          stroke={C.border}
-          strokeWidth={1}
-        />
-        {/* ⭐ label */}
-        <text x={24} y={8} fill={C.faint} fontSize={8} fontFamily="Inter, sans-serif">⭐ Stars</text>
+        <text x={0} y={12} fill={C.faint} fontSize={8} fontFamily="Inter, sans-serif">
+          Ranked by position
+        </text>
       </svg>
     </div>
   );
@@ -535,7 +499,7 @@ function HealthGauge({ demand, competition, opportunity }) {
 export default function MarketCharts({ result }) {
   if (!result) return null;
 
-  const { demand_score, competition_score, opportunity_score, breakdown, top_projects, trend } = result;
+  const { demand_score, competition_score, opportunity_score, breakdown, top_results, trend } = result;
   const trendScore = trend?.trend_score ?? null;
 
   return (
@@ -554,8 +518,8 @@ export default function MarketCharts({ result }) {
           opportunity={opportunity_score}
         />
         <DemandBreakdown breakdown={breakdown} />
-        {top_projects?.length > 0 && (
-          <StarsChart projects={top_projects} />
+        {top_results?.length > 0 && (
+          <WebResultsChart results={top_results} />
         )}
       </div>
     </div>
